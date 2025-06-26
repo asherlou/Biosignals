@@ -1,0 +1,127 @@
+# EGG Signal Analysis and Visualization
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.signal import butter, filtfilt, resample, find_peaks
+from scipy.fft import fft, fftfreq
+from ipywidgets import interact, FloatSlider, IntSlider
+
+# Load the data
+file_path = r"C:\Users\alois\Documents\EVOKE1\Biosignals\Biometrics P1 M33.txt"
+column_names = ['nSeq', 'DI', 'CH1', 'CH2', 'CH3', 'CH4', 'Extra']
+data = pd.read_csv(file_path, sep="\t", comment="#", header=0, names=column_names)
+
+# Convert to numeric
+for ch in ['CH1', 'CH2', 'CH3', 'CH4']:
+    data[ch] = pd.to_numeric(data[ch], errors='coerce')
+
+# Extract EGG signal
+egg = data['CH2']
+fs = 1000  # Hz
+duration = len(egg) / fs
+t = np.linspace(0, duration, len(egg), endpoint=False)
+
+# Low-pass filter
+def butter_lowpass(cutoff, fs, order=5):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return b, a
+
+def lowpass_filter(data, cutoff, fs, order=5):
+    b, a = butter_lowpass(cutoff, fs, order)
+    return filtfilt(b, a, data)
+
+filtered = lowpass_filter(egg, cutoff=0.3, fs=fs)
+
+# Downsample to 1 Hz
+target_fs = 1  # Hz
+num_samples = int(len(filtered) * target_fs / fs)
+downsampled_signal = resample(filtered, num_samples)
+t_downsampled = np.linspace(0, duration, num_samples)
+
+# Peak detection
+def detect_peaks(distance, prominence):
+    peaks, _ = find_peaks(downsampled_signal, distance=distance, prominence=prominence)
+    return peaks
+
+# CPM calculation
+def interval_cpm(peaks, fs, duration, interval_sec):
+    num_intervals = int(duration // interval_sec)
+    interval_cpm = []
+    for i in range(num_intervals):
+        start = i * interval_sec * fs
+        end = (i + 1) * interval_sec * fs
+        count = np.sum((peaks >= start) & (peaks < end))
+        interval_cpm.append(count * (60 / interval_sec))
+    return interval_cpm
+
+# FFT analysis
+def fft_analysis(downsampled_signal, fs):
+    N = len(downsampled_signal)
+    T = 1.0 / fs
+    yf = fft(downsampled_signal)
+    xf = fftfreq(N, T)[:N//2]
+    return xf, np.abs(yf[0:N//2])
+
+# Interactive plot
+def plot_interactive(distance, prominence):
+    peaks = detect_peaks(distance, prominence)
+    total_cpm = len(peaks) * 60 / duration
+    cpm_1min = interval_cpm(peaks, target_fs, duration, 60)
+    cpm_3min = interval_cpm(peaks, target_fs, duration, 180)
+    cpm_5min = interval_cpm(peaks, target_fs, duration, 300)
+
+    xf, yf = fft_analysis(downsampled_signal, target_fs)
+    dominant_freq = xf[np.argmax(yf)] * 60  # Convert to CPM
+
+    plt.figure(figsize=(12, 10))
+
+    plt.subplot(4, 1, 1)
+    plt.plot(t, egg, label='Original')
+    plt.plot(t, filtered, label='Filtered', linestyle='--')
+    plt.plot(t_downsampled, downsampled_signal, label='Downsampled', linestyle='-.')
+    plt.plot(peaks / target_fs, downsampled_signal[peaks], 'x', label='Peaks')
+    plt.title('EGG Signal with Detected Peaks')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+    plt.legend()
+
+    plt.subplot(4, 1, 2)
+    plt.plot(cpm_1min, label='1-min CPM')
+    plt.title('1-Minute Interval CPM')
+    plt.xlabel('Interval')
+    plt.ylabel('CPM')
+    plt.legend()
+
+    plt.subplot(4, 1, 3)
+    plt.plot(cpm_3min, label='3-min CPM')
+    plt.plot(cpm_5min, label='5-min CPM')
+    plt.title('3- and 5-Minute Interval CPM')
+    plt.xlabel('Interval')
+    plt.ylabel('CPM')
+    plt.legend()
+
+    plt.subplot(4, 1, 4)
+    plt.plot(xf * 60, yf)  # Convert frequency to CPM
+    plt.axvspan(0, 2.5, color='red', alpha=0.3, label='Bradygastria')
+    plt.axvspan(2.5, 3.75, color='green', alpha=0.3, label='Normogastria')
+    plt.axvspan(3.75, max(xf * 60), color='yellow', alpha=0.3, label='Tachygastria')
+    plt.title('FFT Analysis')
+    plt.xlabel('Frequency (CPM)')
+    plt.ylabel('Amplitude')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+    print(f"Total CPM: {total_cpm:.2f}")
+    print(f"Average 1-min CPM: {np.mean(cpm_1min):.2f}")
+    print(f"Average 3-min CPM: {np.mean(cpm_3min):.2f}")
+    print(f"Average 5-min CPM: {np.mean(cpm_5min):.2f}")
+    print(f"Dominant Frequency: {dominant_freq:.2f} CPM")
+
+# Launch interactive sliders
+interact(plot_interactive,
+         distance=IntSlider(min=1, max=30, step=1, value=15),
+         prominence=FloatSlider(min=0.01, max=0.1, step=0.01, value=0.05))

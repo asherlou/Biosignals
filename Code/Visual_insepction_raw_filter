@@ -1,0 +1,63 @@
+import pandas as pd
+import neurokit2 as nk
+import matplotlib.pyplot as plt
+from scipy.signal import butter, filtfilt, decimate
+
+# Load the data
+file_path = r"C:\Users\alois\Documents\EVOKE1\Biosignals\Biometrics P1 M33.txt"
+
+# Read the file, skipping metadata
+column_names = ['nSeq', 'DI', 'CH1', 'CH2', 'CH3', 'CH4', 'Extra']
+data = pd.read_csv(file_path, sep="\t", comment="#", header=0, names=column_names)
+
+# Convert to numeric
+for ch in ['CH1', 'CH2', 'CH3', 'CH4']:
+    data[ch] = pd.to_numeric(data[ch], errors='coerce')
+
+# Extract signals
+respiration = data['CH1']
+egg = data['CH2']
+ecg = data['CH3']
+eda = data['CH4']
+
+# Define bandpass filter for EGG (0.015–0.15 Hz)
+def butter_bandpass(lowcut, highcut, fs, order=4):
+    nyquist = 0.5 * fs
+    low = lowcut / nyquist
+    high = highcut / nyquist
+    b, a = butter(order, [low, high], btype='band')
+    return b, a
+
+def bandpass_filter(data, lowcut, highcut, fs, order=4):
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
+    return filtfilt(b, a, data)
+fs = 1000  # Sampling rate
+# Downsample to 10 Hz
+egg_downsampled = decimate(egg, 100)  # Downsample by a factor of 100
+fs_down = 10  # New sampling rate after downsampling
+
+# Clean signals
+respiration_clean = nk.rsp_clean(respiration, sampling_rate=1000)
+ecg_clean = nk.ecg_clean(ecg, sampling_rate=1000)
+eda_clean = nk.eda_clean(eda, sampling_rate=1000)
+egg_clean = bandpass_filter(egg_downsampled, 0.015, 0.15, fs_down)
+
+
+# Plot function
+def plot_signals(raw, clean, title):
+    plt.figure(figsize=(12, 6))
+    plt.subplot(2, 1, 1)
+    plt.plot(raw, label=f'Raw {title}')
+    plt.legend()
+    plt.subplot(2, 1, 2)
+    plt.plot(clean, label=f'Filtered {title}')
+    plt.legend()
+    plt.suptitle(f"{title} Signal")
+    plt.tight_layout()
+    plt.show()
+
+# Plot all signals
+plot_signals(respiration, respiration_clean, "Respiration")
+plot_signals(egg, egg_clean, "EGG")
+plot_signals(ecg, ecg_clean, "ECG")
+plot_signals(eda, eda_clean, "EDA")
